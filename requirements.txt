@@ -1,0 +1,27 @@
+# ── LangGraph / LangChain core ─────────────────────────────────────────────
+langgraph>=0.2.0
+langgraph-checkpoint-sqlite    # SqliteSaver for graph persistence
+langchain>=0.2.0
+langchain-openai>=0.1.0        # used via LiteLLM-compatible endpoint
+langchain-community>=0.2.0
+
+# ── LangGraph Studio (local dev UI, no Docker needed) ──────────────────────
+langgraph-cli[inmem]           # `langgraph dev` command + in-memory server
+
+# ── LLM provider (DeepSeek via OpenAI-compatible API) ──────────────────────
+litellm>=1.40.0
+openai>=1.30.0
+httpx>=0.27.0                  # HTTP client used by LiteLLM / openai SDK
+
+# ── ML / training stack ─────────────────────────────────────────────────────
+torch>=2.2.0
+torchvision>=0.17.0
+scikit-learn>=1.4.0
+numpy>=1.26.0
+pandas>=2.2.0
+Pillow>=10.3.0
+openpyxl>=3.1.2               # reading .xlsx label sheets
+
+# ── Utilities ───────────────────────────────────────────────────────────────
+python-dotenv>=1.0.0
+tqdm>=4.66.0

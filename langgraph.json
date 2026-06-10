@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "mle_star": "./mle_star_agent/graph.py:make_graph"
+  },
+  "env": ".env"
+}

@@ -1,0 +1,42 @@
+# ── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# ── Virtual environments ─────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+
+# ── Secrets ──────────────────────────────────────────────────────────────────
+.env
+
+# ── ML artefacts (large — do not commit) ─────────────────────────────────────
+checkpoints/
+*.pth
+*.pt
+*.onnx
+*.pkl
+
+# ── Proprietary data & customer task spec (DO NOT publish) ───────────────────
+dataset_SUP046_lot1
+dataset_SUP046_lot2
+dataset_SUP046_lot3
+dataset_*/
+AOI_Binary_Inspection_Task_Specification.pdf
+
+# ── LangGraph dev server runtime ─────────────────────────────────────────────
+.langgraph_api/
+
+# ── Logs & caches ────────────────────────────────────────────────────────────
+*.log
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+
+# ── macOS ─────────────────────────────────────────────────────────────────────
+.DS_Store
