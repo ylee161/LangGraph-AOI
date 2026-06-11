@@ -158,28 +158,37 @@ if __name__ == "__main__":
     import json
 
     parser = argparse.ArgumentParser(description="LangGraph AOI MLE-STAR agent")
-    parser.add_argument("--dataset", required=True,
-                        help="Path to dataset root directory")
+    parser.add_argument("--dataset", default=None,
+                        help="Path to dataset root (its immediate subdirs are treated as lot "
+                             "folders). If omitted, the DATASET_GLOB from config.py is used "
+                             "(default: the dataset_SUP046_lot* folders in the project root).")
     parser.add_argument("--goal",    default="NG recall >= 1.00, overkill <= 0.05",
                         help="Natural-language goal description")
+    parser.add_argument("--thread-id", default="mle_star_run_1",
+                        help="Checkpoint thread id; reuse the same id to resume a run.")
     parser.add_argument("--dry-run", action="store_true",
                         help="Enable dry-run mode (1 epoch / 10 samples / MemorySaver)")
     args = parser.parse_args()
 
     if args.dry_run:
         os.environ["DRY_RUN"] = "1"
-        checkpointer = MemorySaver()
-    else:
-        from langgraph.checkpoint.sqlite import SqliteSaver
-        os.makedirs("checkpoints", exist_ok=True)
-        checkpointer = SqliteSaver.from_conn_string("checkpoints/langgraph.db")
+
+    # Stream the nodes' INFO progress logs to the terminal (phase transitions,
+    # candidate runs, metric updates, routing decisions). Without this the root
+    # logger stays at WARNING and a headless run looks silent.
+    import logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    for _noisy in ("httpx", "httpcore", "LiteLLM", "litellm", "urllib3"):
+        logging.getLogger(_noisy).setLevel(logging.WARNING)
 
     from mle_star_agent import config
 
-    graph = build_graph(checkpointer=checkpointer)
-
     initial_state: AgentState = {
-        "dataset_path":                 args.dataset,
+        "dataset_path":                 args.dataset or "",
         "goal":                         args.goal,
         "outer_iteration":              0,
         "inner_iteration":              0,
@@ -205,14 +214,25 @@ if __name__ == "__main__":
     run_tag = "dry-run" if args.dry_run else "full"
     print(f"\nStarting MLE-STAR loop [{run_tag}]")
     print(f"  goal:    {args.goal}")
-    print(f"  dataset: {args.dataset}\n")
+    print(f"  dataset: {args.dataset or f'(glob: {config.DATASET_GLOB})'}\n")
 
-    thread_cfg = {"configurable": {"thread_id": "mle_star_run_1"}}
-    final = graph.invoke(initial_state, config=thread_cfg)
+    thread_cfg = {"configurable": {"thread_id": args.thread_id}}
 
-    print("\nRun complete")
-    skip_keys = {"messages", "knowledge_base", "candidate_scripts"}
-    print(json.dumps(
-        {k: v for k, v in final.items() if k not in skip_keys},
-        indent=2, default=str,
-    ))
+    def _run(graph) -> None:
+        final = graph.invoke(initial_state, config=thread_cfg)
+        print("\nRun complete")
+        skip_keys = {"messages", "knowledge_base", "candidate_scripts"}
+        print(json.dumps(
+            {k: v for k, v in final.items() if k not in skip_keys},
+            indent=2, default=str,
+        ))
+
+    if args.dry_run:
+        _run(build_graph(checkpointer=MemorySaver()))
+    else:
+        # SqliteSaver.from_conn_string is a context manager — the whole run must
+        # execute inside the `with` block, otherwise the SQLite connection is closed.
+        from langgraph.checkpoint.sqlite import SqliteSaver
+        os.makedirs("checkpoints", exist_ok=True)
+        with SqliteSaver.from_conn_string("checkpoints/langgraph.db") as checkpointer:
+            _run(build_graph(checkpointer=checkpointer))

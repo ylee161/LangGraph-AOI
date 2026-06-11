@@ -11,6 +11,7 @@ from typing import Any
 
 from mle_star_agent import config
 from mle_star_agent.shared import metric_guard
+from mle_star_agent.shared.curve_abort import evaluate_curve_abort
 from mle_star_agent.shared.diagnosis_scorer import (
     detect_early_collapse,
     parse_calibration_stats,
@@ -112,8 +113,20 @@ def is_egregious_smoke_metrics(metrics: dict | None) -> bool:
     )
 
 
-def build_smoke_diagnostics(stdout: str, duration_ms: float, *, context: str) -> dict:
-    """Parse and score all cheap smoke signals available in stdout."""
+def build_smoke_diagnostics(
+    stdout: str,
+    duration_ms: float,
+    *,
+    context: str,
+    best_metrics: dict | None = None,
+) -> dict:
+    """Parse and score all cheap smoke signals available in stdout.
+
+    When ``best_metrics`` is supplied, the short per-epoch learning curve is
+    extrapolated (``curve_abort``) and the candidate is pruned if its projected
+    best-case metrics are clearly worse than the current best — letting the
+    cheap smoke run veto an expensive full run.
+    """
     parsed = parse_metrics(stdout)
     guarded = metric_guard.guard_metrics(
         parsed,
@@ -124,6 +137,7 @@ def build_smoke_diagnostics(stdout: str, duration_ms: float, *, context: str) ->
     metrics = metrics_to_dict(guarded) if guarded else None
     epoch_logs = parse_epoch_logs(stdout)
     early_collapse = detect_early_collapse(epoch_logs) if epoch_logs else None
+    curve_abort = evaluate_curve_abort(epoch_logs, best_metrics) if epoch_logs else None
     diagnostics = {
         "metrics": metrics,
         "score": None,
@@ -134,11 +148,15 @@ def build_smoke_diagnostics(stdout: str, duration_ms: float, *, context: str) ->
         "threshold_curve": parse_threshold_curve(stdout),
         "epoch_logs": epoch_logs,
         "early_collapse": early_collapse,
+        "curve_abort": curve_abort,
     }
     diagnostics["score"] = score_smoke_metrics(metrics, diagnostics)
     if is_egregious_smoke_metrics(metrics):
         diagnostics["pruned"] = True
         diagnostics["prune_reason"] = "smoke_pruned_egregious"
+    elif curve_abort and curve_abort.get("abort"):
+        diagnostics["pruned"] = True
+        diagnostics["prune_reason"] = "curve_abort_projected_underperformance"
     return diagnostics
 
 

@@ -63,8 +63,13 @@ def acceptance_distance(metrics: Any) -> float:
     """
     Lower is better. Each gap is normalized by its relaxed budget, then weighted
     by industrial priority (P0×4, P1×3, P2×2, P4×1) so the scalar reflects the
-    spec's P0→P1→P2→P4 order. Used for ablation impact scoring and as a tiebreaker
-    when both candidates have the same relaxed-acceptance status.
+    spec §8 order. Used for ablation impact scoring and as a tiebreaker when both
+    candidates have the same relaxed-acceptance status.
+
+    Priority coverage vs spec §8: P0 miss_rate, P1 ng_recall, P2 overkill_rate and
+    P4 accuracy are weighted here; P3 latency is applied as a lower tiebreaker in
+    is_acceptance_improvement (it is a production constraint, not something to trade
+    accuracy away for); P5 model_size is not tracked in the metrics.
     """
     m = metrics_view(metrics)
     miss_gap = max(0.0, m["miss_rate"] - config.MISS_RATE_RELAXED_MAX)
@@ -127,19 +132,24 @@ def is_acceptance_improvement(new_metrics: Any, current_metrics: Any) -> bool:
     if new_distance > current_distance:
         return False
 
-    # 3. Distances tie: lexicographic P0->P1->P2->P4 tie-breaker.
-    #    Order must follow the spec priority: miss_rate (P0), then ng_recall (P1),
-    #    then overkill_rate (P2), then accuracy (P4). f1 is a final tiebreaker.
+    # 3. Distances tie: lexicographic tie-breaker following the spec §8 priority
+    #    order: P0 miss_rate, P1 ng_recall, P2 overkill_rate, P3 latency, P4 accuracy.
+    #    f1 is a final tiebreaker. (P5 model_size is not tracked in metrics.)
+    #    Latency missing → +inf so a candidate that omits it never wins on absence.
+    new_latency = _metric(new_metrics, "avg_latency_ms", float("inf"))
+    current_latency = _metric(current_metrics, "avg_latency_ms", float("inf"))
     return (
         new["miss_rate"],
         -new["ng_recall"],
         new["overkill_rate"],
+        new_latency,
         -new["accuracy"],
         -new["f1"],
     ) < (
         current["miss_rate"],
         -current["ng_recall"],
         current["overkill_rate"],
+        current_latency,
         -current["accuracy"],
         -current["f1"],
     )

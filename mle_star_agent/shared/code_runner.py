@@ -127,6 +127,10 @@ def run_script(
 def run_script_file(path: Path, timeout: int = config.TIMEOUT_SECONDS, env: Optional[dict] = None) -> RunResult:
     import os
     merged_env = os.environ.copy()
+    # Apple Silicon: let unsupported MPS ops transparently fall back to CPU instead
+    # of raising, so generated scripts that select the `mps` device run end-to-end.
+    # (No-op on CUDA/CPU machines.) Caller-supplied env can still override this.
+    merged_env.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
     if env:
         merged_env.update(env)
 

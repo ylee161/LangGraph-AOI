@@ -29,6 +29,7 @@ from mle_star_agent.shared import code_runner, metric_guard
 from mle_star_agent.shared.acceptance_scoring import is_acceptance_improvement
 from mle_star_agent.shared.aoi_smoke_triage import build_smoke_diagnostics, select_full_run_slots
 from mle_star_agent.shared.checkpoint_io import checkpoint_exists, load_checkpoint, save_checkpoint
+from mle_star_agent.shared.knowledge_base import load_kb_from_disk
 from mle_star_agent.shared.data_split import build_data_split
 from mle_star_agent.shared.llm import build_messages, call_llm, call_llm_json, parse_json_response
 from mle_star_agent.shared.metrics_parser import metrics_to_dict, parse_metrics
@@ -384,6 +385,18 @@ DRY_RUN_SAMPLES = int(os.getenv("DRY_RUN_SAMPLES", "10"))
 ```
 - When DRY_RUN=1: cap each split to DRY_RUN_SAMPLES, set epochs = DRY_RUN_EPOCHS. Still print METRICS:.
 - Full-run epoch count MUST be set via: `epochs = DRY_RUN_EPOCHS if DRY_RUN else 20`
+
+### Device selection (REQUIRED — target machine is Apple Silicon, no CUDA)
+Select the device with CUDA → MPS → CPU priority, and move BOTH the model and every
+input/label tensor to it:
+```python
+device = torch.device(
+    "cuda" if torch.cuda.is_available()
+    else ("mps" if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available() else "cpu")
+)
+```
+- Use float32 tensors (MPS does not support float64); do not call `.double()` or pass `dtype=torch.float64`.
+- Unsupported MPS ops auto-fall back to CPU (PYTORCH_ENABLE_MPS_FALLBACK=1 is set by the runner), so prefer MPS — do NOT hard-code `.cpu()` for training.
 
 ### Stereo 9-channel input (stereo modality only)
 Load img_l AND img_r, compute abs difference, concatenate -> 9-channel tensor.
@@ -822,6 +835,7 @@ def phase1_init_node(state: AgentState) -> dict:
             "best_f1": float(l0.get("best_f1", 0.0)),
             "best_candidate_name": l0.get("best_candidate_name", ""),
             "best_pipeline": {"script": l0.get("script", "")},
+            "knowledge_base": load_kb_from_disk(),
             "outer_iteration": 0,
             "inner_iteration": 0,
             "no_improve_count": 0,
@@ -1014,6 +1028,7 @@ def phase1_init_node(state: AgentState) -> dict:
         "best_overkill_rate": float(best_metrics.get("overkill_rate", 1.0)),
         "best_accuracy": float(best_metrics.get("accuracy", 0.0)),
         "best_f1": float(best_metrics.get("f1", 0.0)),
+        "knowledge_base": load_kb_from_disk(),
         "outer_iteration": 0,
         "inner_iteration": 0,
         "no_improve_count": 0,
@@ -1056,7 +1071,10 @@ if DRY_RUN:
     test_samples  = test_samples[:DRY_RUN_SAMPLES]
 
 epochs = DRY_RUN_EPOCHS if DRY_RUN else 20
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device(
+    "cuda" if torch.cuda.is_available()
+    else ("mps" if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available() else "cpu")
+)
 
 n_ng = max(1, sum(1 for s in train_samples if s["label"] == "NG"))
 n_g  = max(1, sum(1 for s in train_samples if s["label"] == "G"))

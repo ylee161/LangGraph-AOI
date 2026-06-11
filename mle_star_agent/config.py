@@ -85,6 +85,7 @@ DEBUG_MODE                  = os.environ.get("DRY_RUN", "0") not in ("0", "", "f
 DEBUG_CHECK_TIMEOUT_SECONDS = 120   # cap for debug_mode smoke runs
 
 # ─── Curve-abort / smoke debug ────────────────────────────────────────────────
+CURVE_ABORT_ENABLED            = True  # gate expensive full runs on the smoke-curve projection
 CURVE_ABORT_DEBUG_EPOCHS       = 4     # epoch cap for debug micro-run so it emits a short curve
 CURVE_ABORT_MIN_EPOCHS         = 3     # need >= this many per-epoch points to attempt a fit
 CURVE_ABORT_MARGIN             = 0.05  # projected final must be worse than best by at least this

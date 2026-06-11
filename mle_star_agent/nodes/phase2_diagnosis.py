@@ -66,6 +66,12 @@ Your job:
 2. Identify the specific code block c_t in the best pipeline script that should be refined
 3. Write an initial refinement plan p_0 (3-5 concrete bullet points)
 
+Metric priority (industrial spec §8, highest first):
+  P0 miss_rate  >  P1 ng_recall  >  P2 overkill_rate  >  P3 latency  >  P4 accuracy  >  P5 model_size
+NEVER propose a change that regresses a higher-priority metric to improve a lower-priority one
+(e.g. do not trade away ng_recall / raise miss_rate just to cut overkill or lift accuracy).
+A model with high accuracy but an unacceptable miss_rate is NOT qualified.
+
 Guidelines:
 - If miss_rate > 0.03: prioritise NG recall over overkill reduction
 - If overkill_rate > 0.08 and miss_rate <= 0.03: prioritise false-positive control

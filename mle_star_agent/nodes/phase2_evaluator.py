@@ -24,9 +24,52 @@ from mle_star_agent.shared.code_runner import run_script
 from mle_star_agent.shared.metric_guard import guard_metrics
 from mle_star_agent.shared.metrics_parser import metrics_to_dict, parse_metrics
 from mle_star_agent.shared.aoi_smoke_triage import build_smoke_diagnostics
+from mle_star_agent.shared.knowledge_base import build_kb_entry, kb_key, record_outcome
 from mle_star_agent.state import AgentState
 
 logger = logging.getLogger(__name__)
+
+
+def _refinement_context(state: AgentState) -> tuple[str, str, str, str]:
+    """Pull (strategy_name, mechanism, target_component, failure_mode) describing
+    the attempt being evaluated, from the plan history and diagnosis in state."""
+    tried = state.get("tried_approaches", []) or []
+    last = tried[-1] if tried else {}
+    strategy_name = last.get("strategy_name", "unknown_strategy")
+    mechanism = state.get("refinement_plan", "") or last.get("refinement_plan", "")
+    target_component = state.get("target_component", "") or last.get("target_block_code", "")
+
+    failure_mode = ""
+    diag = state.get("diagnosis", "")
+    if isinstance(diag, str) and diag:
+        try:
+            import json as _json
+            fc = (_json.loads(diag) or {}).get("failure_classification") or {}
+            failure_mode = fc.get("failure_mode", "")
+        except Exception:
+            failure_mode = ""
+    return strategy_name, mechanism, target_component, failure_mode
+
+
+def _record_kb_outcome(
+    state: AgentState, *, outcome: str, deltas: dict | None
+) -> dict:
+    """Build + persist a knowledge-base note for this attempt; return merged KB."""
+    strategy_name, mechanism, target_component, failure_mode = _refinement_context(state)
+    entry = build_kb_entry(
+        strategy_name=strategy_name,
+        mechanism=mechanism,
+        target_component=target_component,
+        outcome=outcome,
+        deltas=deltas,
+        outer_iteration=int(state.get("outer_iteration", 0)),
+        inner_iteration=int(state.get("inner_iteration", 0)),
+    )
+    return record_outcome(
+        state.get("knowledge_base", {}),
+        kb_key(failure_mode, target_component),
+        entry,
+    )
 
 def phase2_evaluator_node(state: AgentState) -> dict[str, Any]:
     """Phase 2 evaluator node.
@@ -56,6 +99,63 @@ def phase2_evaluator_node(state: AgentState) -> dict[str, Any]:
             "no_improve_count": state.get("no_improve_count", 0) + 1,
         }
         
+    # Load current best (used both by the curve-abort gate below and the
+    # acceptance comparison after the run).
+    current_best_metrics = {
+        "accuracy": state.get("best_accuracy", 0.0),
+        "ng_recall": state.get("current_best_score", 0.0),  # maps to ng_recall per config
+        "miss_rate": state.get("best_miss_rate", 1.0),
+        "overkill_rate": state.get("best_overkill_rate", 1.0),
+        "f1": state.get("best_f1", 0.0),
+    }
+
+    # ── Curve-abort gate (§ cheap smoke micro-run → extrapolate → skip full run) ──
+    # In production (non-debug) a full run is expensive. Before paying for it, run
+    # a short debug micro-run that emits a per-epoch learning curve, extrapolate it,
+    # and skip the full run when the projection is clearly worse than the best so
+    # far. Only worth doing when we already hold a non-trivial best to compare to.
+    have_meaningful_best = (
+        float(current_best_metrics["ng_recall"]) > 0.0
+        and float(current_best_metrics["overkill_rate"]) < 1.0
+    )
+    if (
+        getattr(config, "CURVE_ABORT_ENABLED", True)
+        and not config.DEBUG_MODE
+        and have_meaningful_best
+    ):
+        smoke_run = run_script(script_to_run, debug_mode=True)
+        smoke_gate = build_smoke_diagnostics(
+            smoke_run.stdout,
+            smoke_run.duration_ms,
+            context="phase2_curve_gate",
+            best_metrics=current_best_metrics,
+        )
+        if smoke_gate.get("prune_reason") == "curve_abort_projected_underperformance":
+            ca = smoke_gate.get("curve_abort") or {}
+            logger.info(
+                "Curve-abort: skipping full run (%s).",
+                "; ".join(ca.get("reasons", [])) or "projected underperformance",
+            )
+            kb = _record_kb_outcome(
+                state,
+                outcome="curve_aborted",
+                deltas={
+                    "projected_ng_recall": ca.get("projected_ng_recall"),
+                    "projected_overkill": ca.get("projected_overkill"),
+                },
+            )
+            return {
+                "inner_iteration": state.get("inner_iteration", 0) + 1,
+                "no_improve_count": state.get("no_improve_count", 0) + 1,
+                "knowledge_base": kb,
+                "candidate_scores": [{
+                    "metrics": {},
+                    "valid": False,
+                    "curve_aborted": True,
+                    "curve_abort": ca,
+                }],
+            }
+
     # Use dry run settings if debug mode
     run_kwargs = {}
     if config.DEBUG_MODE:
@@ -107,15 +207,6 @@ def phase2_evaluator_node(state: AgentState) -> dict[str, Any]:
     # Store in cache that we ran this successfully
     if cached_status is None:
         store_validation_cache(script_to_run, "VALIDATED")
-
-    # Load current best
-    current_best_metrics = {
-        "accuracy": state.get("best_accuracy", 0.0),
-        "ng_recall": state.get("current_best_score", 0.0), # Assuming this maps to ng_recall based on config
-        "miss_rate": state.get("best_miss_rate", 1.0),
-        "overkill_rate": state.get("best_overkill_rate", 1.0),
-        "f1": state.get("best_f1", 0.0),
-    }
 
     improved = False
     best_updates = {}
@@ -171,17 +262,32 @@ def phase2_evaluator_node(state: AgentState) -> dict[str, Any]:
     if state.get("tokens_used", 0) >= config.TOKEN_BUDGET:
         stop_outer_loop = True
 
+    # Record a knowledge-base note for this attempt so the planner learns which
+    # strategies helped/hurt for this failure mode (persisted across runs).
+    if new_metrics_dict:
+        outcome = "accepted" if improved else "rejected"
+        deltas = {
+            "delta_ng_recall": new_metrics_dict.get("ng_recall", 0.0) - float(current_best_metrics["ng_recall"]),
+            "delta_overkill": new_metrics_dict.get("overkill_rate", 1.0) - float(current_best_metrics["overkill_rate"]),
+            "delta_miss_rate": new_metrics_dict.get("miss_rate", 1.0) - float(current_best_metrics["miss_rate"]),
+            "delta_accuracy": new_metrics_dict.get("accuracy", 0.0) - float(current_best_metrics["accuracy"]),
+        }
+    else:
+        outcome, deltas = "invalid", None
+    kb = _record_kb_outcome(state, outcome=outcome, deltas=deltas)
+
     # Output the required state dict updates
     updates = {
         "inner_iteration": inner_iteration,
         "no_improve_count": no_improve_count,
         "stop_outer_loop": stop_outer_loop,
+        "knowledge_base": kb,
         "candidate_scores": [{"metrics": new_metrics_dict, "valid": bool(new_metrics_dict)}]
     }
-    
+
     if new_metrics_dict:
         updates["latest_metrics"] = new_metrics_dict
-        
+
     updates.update(best_updates)
 
     return updates
