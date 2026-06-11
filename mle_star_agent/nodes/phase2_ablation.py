@@ -191,7 +191,7 @@ def _generate_variant_script(
         response = call_llm_json(
             build_messages(_SCRIPT_GEN_SYSTEM, user_prompt),
             model=config.MODEL_PRO,
-            max_tokens=8192,
+            max_tokens=config.SCRIPT_MAX_TOKENS,
             temperature=0.2,
             token_state=token_state,
         )

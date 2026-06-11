@@ -475,7 +475,7 @@ def _generate_script(candidate: dict, modality: str, token_state: dict) -> Optio
         response = call_llm_json(
             build_messages(system_prompt, user_prompt),
             model=config.MODEL_PRO,
-            max_tokens=8192,
+            max_tokens=config.SCRIPT_MAX_TOKENS,
             temperature=0.2,
             token_state=token_state,
         )
@@ -483,6 +483,11 @@ def _generate_script(candidate: dict, modality: str, token_state: dict) -> Optio
             script = response.get("script", "")
             if script and len(script) > 200:
                 return script
+            logger.warning(
+                "Script generation for %s returned empty/short script (len=%d). "
+                "LLM may have exhausted tokens on reasoning; check SCRIPT_MAX_TOKENS.",
+                model_name, len(script or ""),
+            )
     except Exception as exc:
         logger.warning("Script generation failed for %s: %s", model_name, exc)
 
@@ -674,7 +679,7 @@ def _merge_scripts(base_script: str, other_script: str, base_name: str, other_na
         response = call_llm_json(
             build_messages(system_prompt, user_prompt),
             model=config.MODEL_PRO,
-            max_tokens=8192,
+            max_tokens=config.SCRIPT_MAX_TOKENS,
             temperature=0.2,
             token_state=token_state,
         )

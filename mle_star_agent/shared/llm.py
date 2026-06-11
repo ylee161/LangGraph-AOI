@@ -196,7 +196,15 @@ def call_llm(
                     _token_count, config.TOKEN_BUDGET,
                 )
 
-            return response.choices[0].message.content or ""
+            content = response.choices[0].message.content or ""
+            if not content:
+                logger.warning(
+                    "LLM returned empty content (model=%s max_tokens=%d). "
+                    "Extended-thinking may have consumed all token budget — "
+                    "raise SCRIPT_MAX_TOKENS if this happens on script-gen calls.",
+                    model, max_tokens,
+                )
+            return content
 
         except Exception as exc:
             if _is_transient(exc) and attempt < max_retries - 1:
@@ -255,7 +263,15 @@ async def acall_llm(
                     _token_count, config.TOKEN_BUDGET,
                 )
 
-            return response.choices[0].message.content or ""
+            content = response.choices[0].message.content or ""
+            if not content:
+                logger.warning(
+                    "LLM returned empty content async (model=%s max_tokens=%d). "
+                    "Extended-thinking may have consumed all token budget — "
+                    "raise SCRIPT_MAX_TOKENS if this happens on script-gen calls.",
+                    model, max_tokens,
+                )
+            return content
 
         except Exception as exc:
             if _is_transient(exc) and attempt < max_retries - 1:

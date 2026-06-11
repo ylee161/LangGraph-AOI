@@ -114,6 +114,10 @@ THRESHOLD_STEP = 0.05
 # ─── Token budget ────────────────────────────────────────────────────────────
 TOKEN_BUDGET          = 10_000_000
 TOKEN_LITE_THRESHOLD  =  7_000_000   # switch to flash once above this
+# Max output tokens for full-script generation calls. Must exceed MODEL_PRO's
+# extended-thinking budget (16k) so thinking doesn't consume all available tokens
+# and leave content empty.
+SCRIPT_MAX_TOKENS     = 16_000
 
 # ─── Checkpoint filenames ─────────────────────────────────────────────────────
 CKPT_DATA_SPLIT        = CHECKPOINT_DIR / "data_split_grouped.json"

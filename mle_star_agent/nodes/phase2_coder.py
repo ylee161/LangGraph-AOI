@@ -140,6 +140,7 @@ def phase2_coder_node(state: AgentState) -> dict[str, Any]:
             response_data = call_llm_json(
                 messages,
                 model=config.MODEL_PRO,
+                max_tokens=config.SCRIPT_MAX_TOKENS,
                 temperature=0.2,
                 token_state=token_state,
             )
